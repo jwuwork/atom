@@ -296,10 +296,12 @@ class TokenizedBuffer extends Model
     # undefined. This should paper over the problem but we want to figure out
     # what is happening:
     tokenizedLine = @tokenizedLineForRow(row)
-    atom.assert tokenizedLine?, "TokenizedLine is defined", =>
-      metadata:
+    atom.assert tokenizedLine?, "TokenizedLine is defined", (error) =>
+      error.metadata = {
         row: row
         rowCount: @tokenizedLines.length
+      }
+
     return false unless tokenizedLine?
 
     return false if @buffer.isRowBlank(row) or tokenizedLine.isComment()
@@ -373,11 +375,11 @@ class TokenizedBuffer extends Model
       @tokenizedLineForRow(row)
 
   stackForRow: (bufferRow) ->
-    @tokenizedLines[bufferRow]?.ruleStack
+    @tokenizedLineForRow(bufferRow)?.ruleStack
 
   openScopesForRow: (bufferRow) ->
     if bufferRow > 0
-      precedingLine = @tokenizedLines[bufferRow - 1]
+      precedingLine = @tokenizedLineForRow(bufferRow - 1)
       @scopesFromTags(precedingLine.openScopes, precedingLine.tags)
     else
       []
@@ -444,9 +446,9 @@ class TokenizedBuffer extends Model
       0
 
   scopeDescriptorForPosition: (position) ->
-    {row, column} = Point.fromObject(position)
+    {row, column} = @buffer.clipPosition(Point.fromObject(position))
 
-    iterator = @tokenizedLines[row].getTokenIterator()
+    iterator = @tokenizedLineForRow(row).getTokenIterator()
     while iterator.next()
       if iterator.getBufferEnd() > column
         scopes = iterator.getScopes()
