@@ -251,6 +251,16 @@ class Workspace extends Model
   # Returns a {Disposable} on which `.dispose()` can be called to unsubscribe.
   onDidAddPane: (callback) -> @paneContainer.onDidAddPane(callback)
 
+  # Extended: Invoke the given callback before a pane is destroyed in the
+  # workspace.
+  #
+  # * `callback` {Function} to be called before panes are destroyed.
+  #   * `event` {Object} with the following keys:
+  #     * `pane` The pane to be destroyed.
+  #
+  # Returns a {Disposable} on which `.dispose()` can be called to unsubscribe.
+  onWillDestroyPane: (callback) -> @paneContainer.onWillDestroyPane(callback)
+
   # Extended: Invoke the given callback when a pane is destroyed in the
   # workspace.
   #
@@ -442,8 +452,8 @@ class Workspace extends Model
         when 'EACCES'
           atom.notifications.addWarning("Permission denied '#{error.path}'")
           return Q()
-        when 'EPERM', 'EBUSY', 'ENXIO', 'EIO', 'ENOTCONN', 'UNKNOWN'
-          atom.notifications.addWarning("Unable to open '#{error.path}'", detail: error.message)
+        when 'EPERM', 'EBUSY', 'ENXIO', 'EIO', 'ENOTCONN', 'UNKNOWN', 'ECONNRESET', 'EINVAL'
+          atom.notifications.addWarning("Unable to open '#{error.path ? uri}'", detail: error.message)
           return Q()
         else
           throw error

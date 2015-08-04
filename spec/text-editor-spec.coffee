@@ -1221,6 +1221,15 @@ describe "TextEditor", ->
         expect(selection1.getScreenRange()).toEqual [[3, 0], [4, 5]]
         expect(selection2.getScreenRange()).toEqual [[5, 6], [6, 2]]
 
+      describe "when selecting with an initial screen range", ->
+        it "switches the direction of the selection when selecting to positions before/after the start of the initial range", ->
+          editor.setCursorScreenPosition([5, 10])
+          editor.selectWordsContainingCursors()
+          editor.selectToScreenPosition([3, 0])
+          expect(editor.getLastSelection().isReversed()).toBe true
+          editor.selectToScreenPosition([9, 0])
+          expect(editor.getLastSelection().isReversed()).toBe false
+
     describe ".selectToBeginningOfNextParagraph()", ->
       it "selects from the cursor to first line of the next paragraph", ->
         editor.setSelectedBufferRange([[3, 0], [4, 5]])
@@ -2272,6 +2281,17 @@ describe "TextEditor", ->
             expect(editor.indentationForBufferRow(1)).toBe 1
             expect(editor.indentationForBufferRow(2)).toBe 0
 
+        it "indents the new line to the current level when editor.autoIndent is true and no increaseIndentPattern is specified", ->
+          runs ->
+            atom.config.set("editor.autoIndent", true)
+            editor.setGrammar(atom.grammars.selectGrammar("file"))
+            editor.setText('  if true')
+            editor.setCursorBufferPosition([0, 8])
+            editor.insertNewline()
+            expect(editor.getGrammar()).toBe atom.grammars.nullGrammar
+            expect(editor.indentationForBufferRow(0)).toBe 1
+            expect(editor.indentationForBufferRow(1)).toBe 1
+
         it "indents the new line to the correct level when editor.autoIndent is true and using a off-side rule language", ->
           waitsForPromise ->
             atom.packages.activatePackage('language-coffee-script')
@@ -2286,7 +2306,7 @@ describe "TextEditor", ->
             expect(editor.indentationForBufferRow(2)).toBe 0
             expect(editor.indentationForBufferRow(3)).toBe 1
 
-      describe "when a newline is appended on a line that matches the decreaseNextIndentRegex", ->
+      describe "when a newline is appended on a line that matches the decreaseNextIndentPattern", ->
         it "indents the new line to the correct level when editor.autoIndent is true", ->
           waitsForPromise ->
             atom.packages.activatePackage('language-go')
@@ -3004,6 +3024,16 @@ describe "TextEditor", ->
 
           expect(insertedStrings).toEqual ["hello"]
 
+        it "notifies ::onDidInsertText observers", ->
+          insertedStrings = []
+          editor.onDidInsertText ({text, range}) ->
+            insertedStrings.push(text)
+
+          atom.clipboard.write("hello")
+          editor.pasteText()
+
+          expect(insertedStrings).toEqual ["hello"]
+
         describe "when `autoIndentOnPaste` is true", ->
           beforeEach ->
             atom.config.set("editor.autoIndentOnPaste", true)
@@ -3036,7 +3066,18 @@ describe "TextEditor", ->
               expect(editor.lineTextForBufferRow(7)).toBe("\t\t\t * indent")
               expect(editor.lineTextForBufferRow(8)).toBe("\t\t\t **/")
 
-          describe "when pasting a single line of text", ->
+          describe "when pasting line(s) above a line that matches the decreaseIndentPattern", ->
+            it "auto-indents based on the pasted line(s) only", ->
+              atom.clipboard.write("a(x);\n  b(x);\n    c(x);\n", indentBasis: 0)
+              editor.setCursorBufferPosition([7, 0])
+              editor.pasteText()
+
+              expect(editor.lineTextForBufferRow(7)).toBe "      a(x);"
+              expect(editor.lineTextForBufferRow(8)).toBe "        b(x);"
+              expect(editor.lineTextForBufferRow(9)).toBe "          c(x);"
+              expect(editor.lineTextForBufferRow(10)).toBe "    }"
+
+          describe "when pasting a line of text without line ending", ->
             it "does not auto-indent the text", ->
               atom.clipboard.write("a(x);", indentBasis: 0)
               editor.setCursorBufferPosition([5, 0])
@@ -3991,6 +4032,7 @@ describe "TextEditor", ->
 
   describe ".destroy()", ->
     it "destroys all markers associated with the edit session", ->
+      editor.foldAll()
       expect(buffer.getMarkerCount()).toBeGreaterThan 0
       editor.destroy()
       expect(buffer.getMarkerCount()).toBe 0
@@ -4450,13 +4492,16 @@ describe "TextEditor", ->
       expect(editor.getCursorBufferPosition()).toEqual([0, 0])
 
     it "stops at word and underscore boundaries", ->
-      editor.setText("_word \n")
-      editor.setCursorBufferPosition([0, 6])
+      editor.setText("sub_word \n")
+      editor.setCursorBufferPosition([0, 9])
       editor.moveToPreviousSubwordBoundary()
-      expect(editor.getCursorBufferPosition()).toEqual([0, 5])
+      expect(editor.getCursorBufferPosition()).toEqual([0, 8])
 
       editor.moveToPreviousSubwordBoundary()
-      expect(editor.getCursorBufferPosition()).toEqual([0, 1])
+      expect(editor.getCursorBufferPosition()).toEqual([0, 4])
+
+      editor.moveToPreviousSubwordBoundary()
+      expect(editor.getCursorBufferPosition()).toEqual([0, 0])
 
       editor.setText(" word\n")
       editor.setCursorBufferPosition([0, 3])
@@ -4519,6 +4564,17 @@ describe "TextEditor", ->
       expect(cursor1.getBufferPosition()).toEqual([0, 3])
       expect(cursor2.getBufferPosition()).toEqual([1, 6])
 
+  it "works with non-English characters", ->
+    editor.setText("supåTøåst \n")
+    editor.setCursorBufferPosition([0, 9])
+    editor.moveToPreviousSubwordBoundary()
+    expect(editor.getCursorBufferPosition()).toEqual([0, 4])
+
+    editor.setText("supaÖast \n")
+    editor.setCursorBufferPosition([0, 8])
+    editor.moveToPreviousSubwordBoundary()
+    expect(editor.getCursorBufferPosition()).toEqual([0, 4])
+
   describe ".moveToNextSubwordBoundary", ->
     it "does not move the cursor when there is no next subword boundary", ->
       editor.setText('')
@@ -4526,13 +4582,16 @@ describe "TextEditor", ->
       expect(editor.getCursorBufferPosition()).toEqual([0, 0])
 
     it "stops at word and underscore boundaries", ->
-      editor.setText(" word_ \n")
+      editor.setText(" sub_word \n")
       editor.setCursorBufferPosition([0, 0])
       editor.moveToNextSubwordBoundary()
       expect(editor.getCursorBufferPosition()).toEqual([0, 1])
 
       editor.moveToNextSubwordBoundary()
-      expect(editor.getCursorBufferPosition()).toEqual([0, 5])
+      expect(editor.getCursorBufferPosition()).toEqual([0, 4])
+
+      editor.moveToNextSubwordBoundary()
+      expect(editor.getCursorBufferPosition()).toEqual([0, 9])
 
       editor.setText("word \n")
       editor.setCursorBufferPosition([0, 0])
@@ -4593,6 +4652,17 @@ describe "TextEditor", ->
       editor.moveToNextSubwordBoundary()
       expect(cursor1.getBufferPosition()).toEqual([0, 3])
       expect(cursor2.getBufferPosition()).toEqual([1, 6])
+
+  it "works with non-English characters", ->
+    editor.setText("supåTøåst \n")
+    editor.setCursorBufferPosition([0, 0])
+    editor.moveToNextSubwordBoundary()
+    expect(editor.getCursorBufferPosition()).toEqual([0, 4])
+
+    editor.setText("supaÖast \n")
+    editor.setCursorBufferPosition([0, 0])
+    editor.moveToNextSubwordBoundary()
+    expect(editor.getCursorBufferPosition()).toEqual([0, 4])
 
   describe ".selectToPreviousSubwordBoundary", ->
     it "selects subwords", ->

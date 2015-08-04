@@ -109,6 +109,14 @@ class Pane extends Model
   onDidActivate: (callback) ->
     @emitter.on 'did-activate', callback
 
+  # Public: Invoke the given callback before the pane is destroyed.
+  #
+  # * `callback` {Function} to be called before the pane is destroyed.
+  #
+  # Returns a {Disposable} on which `.dispose()` can be called to unsubscribe.
+  onWillDestroy: (callback) ->
+    @emitter.on 'will-destroy', callback
+
   # Public: Invoke the given callback when the pane is destroyed.
   #
   # * `callback` {Function} to be called when the pane is destroyed.
@@ -535,6 +543,8 @@ class Pane extends Model
 
   # Public: Activate the first item that matches the given URI.
   #
+  # * `uri` {String} containing a URI.
+  #
   # Returns a {Boolean} indicating whether an item matching the URI was found.
   activateItemForURI: (uri) ->
     if item = @itemForURI(uri)
@@ -573,6 +583,8 @@ class Pane extends Model
     if @container?.isAlive() and @container.getPanes().length is 1
       @destroyItems()
     else
+      @emitter.emit 'will-destroy'
+      @container?.willDestroyPane(pane: this)
       super
 
   # Called by model superclass.
@@ -700,6 +712,8 @@ class Pane extends Model
       addWarningWithPath('Unable to save file: I/O error writing file')
     else if error.code is 'EINTR'
       addWarningWithPath('Unable to save file: Interrupted system call')
+    else if error.code is 'ECONNRESET'
+      addWarningWithPath('Unable to save file: Connection reset')
     else if error.code is 'ESPIPE'
       addWarningWithPath('Unable to save file: Invalid seek')
     else if errorMatch = /ENOTDIR, not a directory '([^']+)'/.exec(error.message)

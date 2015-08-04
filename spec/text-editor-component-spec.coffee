@@ -88,6 +88,28 @@ describe "TextEditorComponent", ->
       else
         expect(lineNode.textContent).toBe(tokenizedLine.text)
 
+    it "renders tiles upper in the stack in front of the ones below", ->
+      wrapperNode.style.height = 6.5 * lineHeightInPixels + 'px'
+      component.measureDimensions()
+      nextAnimationFrame()
+
+      tilesNodes = componentNode.querySelector(".lines").querySelectorAll(".tile")
+
+      expect(tilesNodes[0].style.zIndex).toBe("2")
+      expect(tilesNodes[1].style.zIndex).toBe("1")
+      expect(tilesNodes[2].style.zIndex).toBe("0")
+
+      verticalScrollbarNode.scrollTop = 1 * lineHeightInPixels
+      verticalScrollbarNode.dispatchEvent(new UIEvent('scroll'))
+      nextAnimationFrame()
+
+      tilesNodes = componentNode.querySelector(".lines").querySelectorAll(".tile")
+
+      expect(tilesNodes[0].style.zIndex).toBe("3")
+      expect(tilesNodes[1].style.zIndex).toBe("2")
+      expect(tilesNodes[2].style.zIndex).toBe("1")
+      expect(tilesNodes[3].style.zIndex).toBe("0")
+
     it "renders the currently-visible lines in a tiled fashion", ->
       wrapperNode.style.height = 6.5 * lineHeightInPixels + 'px'
       component.measureDimensions()
@@ -280,6 +302,7 @@ describe "TextEditorComponent", ->
         expect(tileNode.style.backgroundColor).toBe(backgroundColor)
 
       wrapperNode.style.backgroundColor = 'rgb(255, 0, 0)'
+      atom.views.performDocumentPoll()
 
       advanceClock(atom.views.documentPollingInterval)
       nextAnimationFrame()
@@ -701,7 +724,8 @@ describe "TextEditorComponent", ->
 
       # favor gutter color if it's assigned
       gutterNode.style.backgroundColor = 'rgb(255, 0, 0)'
-      advanceClock(atom.views.documentPollingInterval)
+      atom.views.performDocumentPoll()
+
       nextAnimationFrame()
       expect(lineNumbersNode.style.backgroundColor).toBe 'rgb(255, 0, 0)'
       for tileNode in lineNumbersNode.querySelectorAll(".tile")
@@ -800,6 +824,7 @@ describe "TextEditorComponent", ->
 
         describe "when the component is destroyed", ->
           it "stops listening for folding events", ->
+            nextAnimationFrame()
             component.destroy()
 
             lineNumber = component.lineNumberNodeForScreenRow(1)
@@ -824,6 +849,8 @@ describe "TextEditorComponent", ->
           expect(lineNumberHasClass(1, 'folded')).toBe false
 
         it "does not fold when the line number componentNode is clicked", ->
+          nextAnimationFrame() unless nextAnimationFrame is noAnimationFrame # clear pending frame request if needed
+
           lineNumber = component.lineNumberNodeForScreenRow(1)
           lineNumber.dispatchEvent(buildClickEvent(lineNumber))
           expect(nextAnimationFrame).toBe noAnimationFrame
@@ -1147,7 +1174,7 @@ describe "TextEditorComponent", ->
     [marker, decoration, decorationParams] = []
 
     beforeEach ->
-      marker = editor.displayBuffer.markBufferRange([[2, 13], [3, 15]], invalidate: 'inside')
+      marker = editor.displayBuffer.markBufferRange([[2, 13], [3, 15]], invalidate: 'inside', maintainHistory: true)
       decorationParams = {type: ['line-number', 'line'], class: 'a'}
       decoration = editor.decorateMarker(marker, decorationParams)
       nextAnimationFrame()
@@ -1291,7 +1318,7 @@ describe "TextEditorComponent", ->
     [marker, decoration, decorationParams, scrollViewClientLeft] = []
     beforeEach ->
       scrollViewClientLeft = componentNode.querySelector('.scroll-view').getBoundingClientRect().left
-      marker = editor.displayBuffer.markBufferRange([[2, 13], [3, 15]], invalidate: 'inside')
+      marker = editor.displayBuffer.markBufferRange([[2, 13], [3, 15]], invalidate: 'inside', maintainHistory: true)
       decorationParams = {type: 'highlight', class: 'test-highlight'}
       decoration = editor.decorateMarker(marker, decorationParams)
       nextAnimationFrame()
@@ -1469,6 +1496,17 @@ describe "TextEditorComponent", ->
 
         overlay = component.getTopmostDOMNode().querySelector('atom-overlay .overlay-test')
         expect(overlay).toBe null
+
+      it "renders the overlay element with the CSS class specified by the decoration", ->
+        marker = editor.displayBuffer.markBufferRange([[2, 13], [2, 13]], invalidate: 'never')
+        decoration = editor.decorateMarker(marker, {type: 'overlay', class: 'my-overlay', item})
+        nextAnimationFrame()
+
+        overlay = component.getTopmostDOMNode().querySelector('atom-overlay.my-overlay')
+        expect(overlay).not.toBe null
+
+        child = overlay.querySelector('.overlay-test')
+        expect(child).toBe item
 
     describe "when the marker is not empty", ->
       it "renders at the head of the marker by default", ->
@@ -1768,6 +1806,58 @@ describe "TextEditorComponent", ->
           call.args.pop() for call in window.removeEventListener.calls
           expect(window.removeEventListener).toHaveBeenCalledWith('mouseup')
           expect(window.removeEventListener).toHaveBeenCalledWith('mousemove')
+
+    describe "when the mouse is double-clicked and dragged", ->
+      it "expands the selection over the nearest word as the cursor moves", ->
+        jasmine.attachToDOM(wrapperNode)
+        wrapperNode.style.height =  6 * lineHeightInPixels + 'px'
+        component.measureDimensions()
+        nextAnimationFrame()
+
+        linesNode.dispatchEvent(buildMouseEvent('mousedown', clientCoordinatesForScreenPosition([5, 10]), detail: 1))
+        linesNode.dispatchEvent(buildMouseEvent('mouseup'))
+        linesNode.dispatchEvent(buildMouseEvent('mousedown', clientCoordinatesForScreenPosition([5, 10]), detail: 2))
+        expect(editor.getSelectedScreenRange()).toEqual [[5, 6], [5, 13]]
+
+        linesNode.dispatchEvent(buildMouseEvent('mousemove', clientCoordinatesForScreenPosition([11, 11]), which: 1))
+        nextAnimationFrame()
+        expect(editor.getSelectedScreenRange()).toEqual [[5, 6], [11, 13]]
+
+        maximalScrollTop = editor.getScrollTop()
+
+        linesNode.dispatchEvent(buildMouseEvent('mousemove', clientCoordinatesForScreenPosition([9, 3]), which: 1))
+        nextAnimationFrame()
+        expect(editor.getSelectedScreenRange()).toEqual [[5, 6], [9, 4]]
+        expect(editor.getScrollTop()).toBe maximalScrollTop # does not autoscroll upward (regression)
+
+        linesNode.dispatchEvent(buildMouseEvent('mouseup', clientCoordinatesForScreenPosition([9, 3]), which: 1))
+
+    describe "when the mouse is triple-clicked and dragged", ->
+      it "expands the selection over the nearest line as the cursor moves", ->
+        jasmine.attachToDOM(wrapperNode)
+        wrapperNode.style.height =  6 * lineHeightInPixels + 'px'
+        component.measureDimensions()
+        nextAnimationFrame()
+
+        linesNode.dispatchEvent(buildMouseEvent('mousedown', clientCoordinatesForScreenPosition([5, 10]), detail: 1))
+        linesNode.dispatchEvent(buildMouseEvent('mouseup'))
+        linesNode.dispatchEvent(buildMouseEvent('mousedown', clientCoordinatesForScreenPosition([5, 10]), detail: 2))
+        linesNode.dispatchEvent(buildMouseEvent('mouseup'))
+        linesNode.dispatchEvent(buildMouseEvent('mousedown', clientCoordinatesForScreenPosition([5, 10]), detail: 3))
+        expect(editor.getSelectedScreenRange()).toEqual [[5, 0], [6, 0]]
+
+        linesNode.dispatchEvent(buildMouseEvent('mousemove', clientCoordinatesForScreenPosition([11, 11]), which: 1))
+        nextAnimationFrame()
+        expect(editor.getSelectedScreenRange()).toEqual [[5, 0], [12, 0]]
+
+        maximalScrollTop = editor.getScrollTop()
+
+        linesNode.dispatchEvent(buildMouseEvent('mousemove', clientCoordinatesForScreenPosition([8, 4]), which: 1))
+        nextAnimationFrame()
+        expect(editor.getSelectedScreenRange()).toEqual [[5, 0], [9, 0]]
+        expect(editor.getScrollTop()).toBe maximalScrollTop # does not autoscroll upward (regression)
+
+        linesNode.dispatchEvent(buildMouseEvent('mouseup', clientCoordinatesForScreenPosition([9, 3]), which: 1))
 
     describe "when a line is folded", ->
       beforeEach ->
@@ -2600,7 +2690,7 @@ describe "TextEditorComponent", ->
         expect(componentNode.querySelectorAll('.line').length).toBe 0
 
         hiddenParent.style.display = 'block'
-        advanceClock(atom.views.documentPollingInterval)
+        atom.views.performDocumentPoll()
 
         expect(componentNode.querySelectorAll('.line').length).toBeGreaterThan 0
 
@@ -2710,13 +2800,13 @@ describe "TextEditorComponent", ->
       expect(parseInt(newHeight)).toBeLessThan wrapperNode.offsetHeight
       wrapperNode.style.height = newHeight
 
-      advanceClock(atom.views.documentPollingInterval)
+      atom.views.performDocumentPoll()
       nextAnimationFrame()
       expect(componentNode.querySelectorAll('.line')).toHaveLength(6)
 
       gutterWidth = componentNode.querySelector('.gutter').offsetWidth
       componentNode.style.width = gutterWidth + 14 * charWidth + editor.getVerticalScrollbarWidth() + 'px'
-      advanceClock(atom.views.documentPollingInterval)
+      atom.views.performDocumentPoll()
       nextAnimationFrame()
       expect(componentNode.querySelector('.line').textContent).toBe "var quicksort "
 
@@ -2725,7 +2815,7 @@ describe "TextEditorComponent", ->
       scrollViewNode.style.paddingLeft = 20 + 'px'
       componentNode.style.width = 30 * charWidth + 'px'
 
-      advanceClock(atom.views.documentPollingInterval)
+      atom.views.performDocumentPoll()
       nextAnimationFrame()
 
       expect(component.lineNodeForScreenRow(0).textContent).toBe "var quicksort = "
